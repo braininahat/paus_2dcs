@@ -1,10 +1,10 @@
-from datetime import datetime
 import json
 import shutil
+from datetime import datetime
+from glob import glob
 from pathlib import Path
-from typing import Dict, List, Optional
 
-import numpy as np
+import torch
 import typer
 from natsort import natsorted
 from tqdm import tqdm
@@ -163,6 +163,99 @@ def trainer(
                 early_stopping_patience,
                 target_size,
             )
+
+
+@app.command()
+def tester(
+    weights_root: Annotated[Path, typer.Option()],
+    dataset_root: Annotated[Path, typer.Option()] = Path("dataset/preprocessed"),
+    split: Annotated[str, typer.Option()] = "bal",
+    target_size: Annotated[str, typer.Option()] = "150,390",
+    num_classes: Annotated[int, typer.Option()] = 2,
+    device: Annotated[str, typer.Option()] = None,
+):
+    target_size = target_size.split(",")
+    target_size = [int(size) for size in target_size]
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info(f"using device: {device}")
+
+    logger.info(f"weights_root: {weights_root.resolve()}")
+    weights_paths = natsorted(glob(f"{weights_root}/*/*/best*.pth"))
+
+    for weights_path in weights_paths:
+        logger.info(f"weights_paths: {weights_path}")
+        model_name = weights_path.split("/")[-3]
+        logger.info(f"model: {model_name}")
+
+        modality = weights_path.split("/")[-2]
+        logger.info(f"modality: {modality}")
+
+        use_dct = True if "DCT" in modality else False
+        logger.info(f"using DCT: {use_dct}")
+        use_gabor = True if "Gabor" in modality else False
+        logger.info(f"using Gabor: {use_gabor}")
+
+        test_loader = train.get_dataloaders(
+            dataset_root,
+            split,
+            "test",
+            modality,
+            target_size,
+            num_classes,
+            use_dct,
+            use_gabor,
+            batch_size=1,
+            shuffle=False,
+        )
+
+        train.test_model(
+            weights_path, model_name, modality, test_loader, device, target_size
+        )
+
+
+# @app.command()
+# def plot_all_roc_curves(
+#     weights_root: Annotated[Path, typer.Option()],
+#     dataset_root: Annotated[Path, typer.Option()] = Path("dataset"),
+#     split: Annotated[str, typer.Option()] = "bal",
+#     target_size: Annotated[str, typer.Option()] = "150,390",
+#     num_classes: Annotated[int, typer.Option()] = 2,
+#     device: Annotated[str, typer.Option()] = None,
+# ):
+#     if device is None:
+#         device = "cuda" if torch.cuda.is_available() else "cpu"
+#     logger.info(f"using device: {device}")
+
+#     logger.info(f"weights_root: {weights_root.resolve()}")
+#     weights_paths = natsorted(glob(f"{weights_root}/*/*/best*.pth"))
+
+#     for weights_path in weights_paths:
+#         logger.info(f"weights_paths: {weights_path}")
+#         model_name = weights_path.split("/")[-3]
+#         logger.info(f"model: {model_name}")
+
+#         modality = weights_path.split("/")[-2]
+#         logger.info(f"modality: {modality}")
+
+#         use_dct = True if "DCT" in modality else False
+#         logger.info(f"using DCT: {use_dct}")
+#         use_gabor = True if "Gabor" in modality else False
+#         logger.info(f"using Gabor: {use_gabor}")
+
+#         test_loader = train.get_dataloaders(
+#             dataset_root,
+#             split,
+#             "test",
+#             modality,
+#             target_size,
+#             num_classes,
+#             use_dct,
+#             use_gabor,
+#             batch_size=1,
+#             shuffle
+#             )
 
 
 if __name__ == "__main__":

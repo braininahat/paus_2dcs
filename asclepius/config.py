@@ -19,6 +19,7 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 # MLFLOW_TRACKING_URI = "file://" + str(MODEL_REGISTRY.absolute())
 # mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
+
 # Logger
 logging_config = {
     "version": 1,

@@ -1,10 +1,11 @@
-from glob import glob
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
 import torch
 import torch.nn as nn
-from natsort import natsorted
 from sklearn.metrics import auc, f1_score, precision_score, recall_score, roc_curve
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
@@ -31,6 +32,7 @@ def get_dataloaders(
     if not Path.exists(dataset_dir):
         raise ValueError(f"dataset directory not found: {dataset_dir}")
     logger.info(f"found dataset directory: {dataset_dir}")
+
     if mode == "train":
         train_dataset = BreastDataset(
             f"{dataset_dir}/train",
@@ -53,8 +55,7 @@ def get_dataloaders(
         val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
         return train_loader, val_loader
-
-    elif split == "test":
+    elif mode == "test":
         test_dataset = BreastDataset(
             f"{dataset_dir}/test",
             modality,
@@ -64,7 +65,7 @@ def get_dataloaders(
             use_gabor,
         )
 
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle)
+        test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
         return test_loader
 
@@ -112,8 +113,8 @@ def train_model(
         for images, labels in train_loader:
             optimizer.zero_grad()
 
-            images = images.cuda()
-            labels = labels.cuda()
+            images = images.to(device)
+            labels = labels.to(device)
 
             outputs = model(images)
 
@@ -195,141 +196,109 @@ def train_model(
     logger.info("Training finished!")
 
 
-# def test_model(
-#     test_loaders: List[Dict[str, DataLoader]],
-#     model_name: str,
-# ):
-#     all_fpr = []
-#     all_tpr = []
-#     all_roc_auc = []
-#     all_thresholds = []
+def test_model(
+    weights_path: Path,
+    model_name: str,
+    modality: str,
+    test_loader: DataLoader,
+    device: str = "cuda:0",
+    target_size: List[int] = [150, 390],
+):
+    output_path = Path(weights_path).parent.joinpath("results")
+    output_path.mkdir(parents=True, exist_ok=True)
 
-#     plot_labels = {
-#         "US": "Image(US)+CNN",
-#         "PA": "Image(PA)+CNN",
-#         "PAUS": "Image(PAUS)+CNN",
-#         "DCTUS": "DCT(US)+CNN",
-#         "DCTPA": "DCT(PA)+CNN",
-#         "DCTPAUS": "DCT(PAUS)+CNN",
-#         "GaborUS": "Gabor(US)+CNN",
-#         "GaborPA": "Gabor(PA)+CNN",
-#         "GaborPAUS": "Gabor(PAUS)+CNN",
-#         "DualPAUS": "[Image(PAUS)+DCT(PAUS)]+CNN",
-#     }
+    if "Dual" in modality:
+        in_channels = 4
+    elif "PAUS" in modality:
+        in_channels = 2
+    else:
+        in_channels = 1
 
-#         logger.info(f"Dataset Split: {dataset_split}, Modality: {modality}")
+    if model_name == "cnn":
+        model = models.BreastCNN(in_channels=in_channels, image_size=target_size)
+    elif model_name == "swin":
+        model = models.custom_swin_t(in_channels=in_channels)
+    elif model_name == "vit":
+        model = models.custom_vit_b_16(in_channels=in_channels)
+    elif model_name == "densenet":
+        model = models.custom_densenet(in_channels=in_channels)
 
-#         if "Dual" in modality:
-#             in_channels = 4
-#         elif "PAUS" in modality:
-#             in_channels = 2
-#         else:
-#             in_channels = 1
+    try:
+        model.load_state_dict(torch.load(weights_path, map_location=device))
+    except FileNotFoundError as e:
+        logger.error(f"{weights_path} not found")
+        return
+    model.to(device)
+    model.eval()
 
-#         if model_name == "cnn":
-#             model = models.BreastCNN(in_channels=in_channels)
-#         elif model_name == "swin":
-#             model = models.custom_swin_t(in_channels=in_channels)
-#         elif model_name == "vit":
-#             model = models.custom_vit_b_16(in_channels=in_channels)
+    true_labels = []
+    predicted_labels = []
+    predicted_probs = []
 
-#         model.cuda()
+    with torch.no_grad():
+        for image, label in test_loader:
+            image = image.to(device)
+            label = label.to(device)
 
-#         try:
-#             model.load_state_dict(
-#                 torch.load(f"{run_prefix}/{modality}/{dataset_split}/best_auc.pth")
-#             )
-#         except FileNotFoundError as e:
-#             logger.error(
-#                 f"No best_auc weights found for {modality} {dataset_split}. Skipping..."
-#             )
-#             continue
+            output = model(image)
 
-#         model.eval()
+            predicted_probs.extend(output.detach().cpu().numpy())
+            predicted_labels.extend(
+                torch.argmax(output.detach(), dim=1).cpu().numpy()
+            )  # Threshold at 0.5 for binary classification
 
-#         true_labels = []
-#         predicted_labels = []
-#         predicted_probs = []
+            true_labels.extend(label.cpu().numpy())
 
-#         with torch.no_grad():
-#             for image, label in test_loader:
-#                 image = image.cuda()
-#                 label = label.cuda()
-#                 output = model(image)
-#                 predicted_probs.extend(output.detach().cpu().numpy())
-#                 predicted_labels.extend(
-#                     torch.argmax(output.detach(), dim=1).cpu().numpy()
-#                 )  # Threshold at 0.5 for binary classification
-#                 true_labels.extend(label.cpu().numpy())
+    # Calculate F1 score, precision, and recall
 
-#         # Calculate F1 score, precision, and recall
+    f1 = f1_score(true_labels, predicted_labels, average="weighted")
+    precision = precision_score(true_labels, predicted_labels, average="weighted")
+    recall = recall_score(true_labels, predicted_labels, average="weighted")
 
-#         f1 = f1_score(true_labels, predicted_labels, average="weighted")
-#         precision = precision_score(true_labels, predicted_labels, average="weighted")
-#         recall = recall_score(true_labels, predicted_labels, average="weighted")
+    logger.info(f"Test results for {model_name} - {modality}:")
+    logger.info(f"F1 Score: {f1:.2f}\tPrecision: {precision:.2f}\tRecall: {recall:.2f}")
 
-#         pred_gt_pairs = np.vstack(
-#             [np.squeeze(np.array(predicted_labels).T), true_labels]
-#         ).T
-#         preds = np.squeeze(np.array(predicted_labels))
-#         gts = np.squeeze(np.array(true_labels))
-#         vals, counts = np.unique(np.equal(preds, gts), return_counts=True)
+    pred_gt_pairs = np.vstack([np.squeeze(np.array(predicted_labels).T), true_labels]).T
+    preds = np.squeeze(np.array(predicted_labels))
+    gts = np.squeeze(np.array(true_labels))
 
-#         hmap = sns.heatmap(pred_gt_pairs, cbar=False)
-#         fig = hmap.get_figure()
-#         if not os.path.exists(f"{run_prefix}/{modality}/{dataset_split}/results/"):
-#             os.makedirs(f"{run_prefix}/{modality}/{dataset_split}/results/")
-#         fig.savefig(f"{run_prefix}/{modality}/{dataset_split}/results/best_auc.png")
-#         plt.close(fig)
+    hmap = sns.heatmap(pred_gt_pairs, cbar=False)
+    fig = hmap.get_figure()
 
-#         # Calculate ROC curve and AUC for validation set
-#         fpr, tpr, thresholds = roc_curve(
-#             gts, np.array(predicted_probs)[:, 1], drop_intermediate=False
-#         )
-#         roc_auc = auc(fpr, tpr)
+    fig.savefig(output_path.joinpath("best_auc_heatmap.png"))
+    plt.close(fig)
 
-#         # Append the fpr, tpr, and roc_auc to the respective lists
-#         all_fpr.append(fpr)
-#         all_tpr.append(tpr)
-#         all_thresholds.append(thresholds)
-#         all_roc_auc.append(roc_auc)
+    # Calculate ROC curve and AUC for validation set
+    fpr, tpr, thresholds = roc_curve(
+        gts, np.array(predicted_probs)[:, 1], drop_intermediate=False
+    )
+    roc_auc = auc(fpr, tpr)
 
-#         # Plot ROC curve
-#         plt.figure(figsize=(8, 6))
-#         plt.plot(
-#             fpr,
-#             tpr,
-#             color="darkorange",
-#             lw=2,
-#             label="ROC curve (area = {:.2f})".format(roc_auc),
-#         )
-#         plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
-#         plt.xlim([0.0, 1.0])
-#         plt.ylim([0.0, 1.05])
-#         plt.xlabel("False Positive Rate")
-#         plt.ylabel("True Positive Rate")
-#         plt.title("Receiver Operating Characteristic")
-#         plt.legend(loc="lower right")
-#         plt.savefig(f"{run_prefix}/{modality}/{dataset_split}/results/best_auc_roc.png")
-#         plt.close()
+    # Plot ROC curve
+    plt.figure(figsize=(8, 6))
+    plt.plot(
+        fpr,
+        tpr,
+        color="darkorange",
+        lw=2,
+        label="ROC curve (area = {:.2f})".format(roc_auc),
+    )
+    plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("Receiver Operating Characteristic")
+    plt.legend(loc="lower right")
+    plt.savefig(output_path.joinpath("best_auc_roc.png"))
+    plt.close()
 
-#     # Plot all ROC curves in one figure
-#     plt.figure(figsize=(8, 6))
-#     for i in range(len(test_loaders)):
-#         plt.plot(
-#             all_fpr[i],
-#             all_tpr[i],
-#             lw=2,
-#             label=f"{plot_labels[test_loaders[i][1]]} (area = {all_roc_auc[i]:.2f})",
-#             linestyle="solid" if "DCT" in test_loaders[i][1] else "dashed",
-#         )
+    np.savez(
+        output_path.joinpath("metrics.npz"),
+        fpr=fpr,
+        tpr=tpr,
+        thresholds=thresholds,
+        roc_auc=roc_auc,
+    )
 
-#     # plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-#     plt.xlim([0.0, 1.0])
-#     plt.ylim([0.0, 1.05])
-#     plt.xlabel("False Positive Rate")
-#     plt.ylabel("True Positive Rate")
-#     plt.title("Receiver Operating Characteristic")
-#     plt.legend(loc="lower right")
-#     plt.savefig("all_roc_curves.png")  # Save the combined ROC curves
-#     plt.show()  # Display the combined ROC curves
+    return {"fpr": fpr, "tpr": tpr, "thresholds": thresholds, "roc_auc": roc_auc}
