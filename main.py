@@ -86,7 +86,7 @@ def trainer(
     ).resolve(),
     split: Annotated[str, typer.Option()] = "bal",
     modalities: Annotated[str, typer.Option()] = "US",
-    target_size: Annotated[List[int], typer.Option()] = (150, 390),
+    target_size: Annotated[str, typer.Option()] = "150,390",
     num_classes: Annotated[int, typer.Option()] = 2,
     batch_size: Annotated[int, typer.Option()] = 32,
     shuffle: Annotated[bool, typer.Option()] = True,
@@ -101,6 +101,9 @@ def trainer(
 
     modalities = modalities.split(",")
     logger.info(f"modalities: {modalities}")
+
+    target_size = target_size.split(",")
+    target_size = [int(size) for size in target_size]
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     mode = "train"
@@ -158,6 +161,7 @@ def trainer(
                 wd,
                 dropout,
                 early_stopping_patience,
+                target_size,
             )
 
 

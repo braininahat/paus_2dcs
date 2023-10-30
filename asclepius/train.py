@@ -81,13 +81,16 @@ def train_model(
     wd: float = 0,
     dropout: float = 0.5,
     early_stopping_patience: int = 50,
+    target_size: List[int] = [150, 390],
 ):
     if model_name == "cnn":
-        model = models.BreastCNN(in_channels=in_channels)
+        model = models.BreastCNN(in_channels=in_channels, image_size=target_size)
     elif model_name == "swin":
         model = models.custom_swin_t(in_channels=in_channels)
     elif model_name == "vit":
         model = models.custom_vit_b_16(in_channels=in_channels)
+    elif model_name == "densenet":
+        model = models.custom_densenet(in_channels=in_channels)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
