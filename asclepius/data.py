@@ -1,8 +1,9 @@
+import shutil
 import json
 import os
 from glob import glob
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import h5py
@@ -14,6 +15,8 @@ from scipy.fftpack import dct
 from skimage.exposure import rescale_intensity
 from torch.utils.data import Dataset
 from torchvision import transforms
+
+from asclepius.config import logger
 
 
 class BreastDataset(Dataset):
@@ -55,7 +58,9 @@ class BreastDataset(Dataset):
             transforms.Resize(self.target_size),
             transforms.ToTensor(),
         ]
-
+        
+        logger.info(f"modalities: {modalities}")
+        
         if "PA" in modalities:
             self.pa_file_list = natsorted(glob(f"{self.data_dir}/*PA*.mat"))
         if "US" in modalities:
@@ -98,7 +103,6 @@ class BreastDataset(Dataset):
         elif "US" in self.modalities:
             label = us_label
 
-        # Convert label to a numeric value, e.g., 0 for 'clean' and 1 for 'tumor'
         label = 0 if label == "clean" else 1
 
         if "PA" in self.modalities:
@@ -159,7 +163,7 @@ def load_metadata(dataset_root: Path, filename: Optional[str] = "metadata.json")
 
 
 def get_patient_ids(directories: List[Path]):
-    return [directory.stem for directory in directories]
+    return [directory.stem for directory in directories if "RP" in str(directory)]
 
 
 def get_patient_metadata_pairs(patient_ids: List[str], metadata: Dict):
@@ -217,10 +221,53 @@ def prepare_patient_data(mat_files: Dict, metadata: Dict):
     return {"pa_arr": pa_arr, "us_arr": us_arr}
 
 
+def calculate_split_bounds(split: str, frame_count: int, metadata: dict):
+    tumor_bounds = metadata["tumor_bounds"]["sides"]
+
+    start_index = 0
+    end_index = frame_count
+
+    if split == "full":
+        return ([start_index, end_index], tumor_bounds)
+
+    right_gap = end_index - tumor_bounds[1]
+    left_gap = tumor_bounds[0]
+
+    if split == "bal":
+        tumor_frame_count = tumor_bounds[1] - tumor_bounds[0]
+
+        pad_width = tumor_frame_count // 2
+
+        near_left = False
+        near_right = False
+
+        if right_gap < pad_width:
+            near_right = True
+        if left_gap < pad_width:
+            near_left = True
+
+        if near_right and near_left:
+            return ([start_index, end_index], tumor_bounds)
+
+        pad_count_l = pad_width
+        pad_count_r = pad_width
+
+        if near_right:
+            pad_count_l += pad_count_r - right_gap
+
+        elif near_left:
+            pad_count_r += pad_count_l - left_gap
+
+        start_index = tumor_bounds[0] - pad_count_l
+        end_index = tumor_bounds[1] + pad_count_r
+
+        return ([start_index, end_index], tumor_bounds)
+
+
 def label_and_save_frames(
-    data_root: Path, patient_id: str, transformed_arrs: Dict, metadata: Dict
+    data_root: Path, split: str, patient_id: str, transformed_arrs: Dict, metadata: Dict
 ):
-    target_dir = data_root.joinpath("preprocessed")
+    target_dir = data_root.joinpath(f"preprocessed/{split}")
     os.makedirs(target_dir, exist_ok=True)
 
     pa_arr_shape = transformed_arrs["pa_arr"].shape
@@ -232,17 +279,84 @@ def label_and_save_frames(
 
     pa_norm = rescale_intensity(transformed_arrs["pa_arr"], out_range=(0, 1))
     us_norm = rescale_intensity(transformed_arrs["us_arr"], out_range=(0, 1))
-    for cs_index in range(pa_arr_shape[-1]):
-        if cs_index > tumor_bounds[0] and cs_index < tumor_bounds[1]:
-            label = "tumor"
+
+    frame_count = pa_norm.shape[-1]
+    padded_bounds, tumor_bounds = calculate_split_bounds(split, frame_count, metadata)
+    start_index, end_index = padded_bounds
+    tumor_start, tumor_end = tumor_bounds
+
+    for cs_index in range(frame_count):
+        if cs_index < start_index:
+            continue
+        elif cs_index > end_index:
+            break
         else:
-            label = "clean"
-        scio.savemat(
-            str(target_dir.joinpath(f"{patient_id}_PA_{cs_index}.mat")),
-            {"frame": pa_norm[:, :, cs_index], "label": label},
-        )
-        scio.savemat(
-            str(target_dir.joinpath(f"{patient_id}_US_{cs_index}.mat")),
-            {"frame": us_norm[:, :, cs_index], "label": label},
-        )
+            if cs_index > tumor_start and cs_index < tumor_end:
+                label = "tumor"
+            else:
+                label = "clean"
+            scio.savemat(
+                str(target_dir.joinpath(f"{patient_id}_PA_{cs_index}.mat")),
+                {"frame": pa_norm[:, :, cs_index], "label": label},
+            )
+            scio.savemat(
+                str(target_dir.joinpath(f"{patient_id}_US_{cs_index}.mat")),
+                {"frame": us_norm[:, :, cs_index], "label": label},
+            )
     return True
+
+
+def split_dataset(
+    dataset_split_path: Path,
+    split_ratios: List[int],
+    patient_id_split: Dict = None,
+):
+    mat_files = natsorted(glob(f"{str(dataset_split_path)}/*.mat"))
+    logger.info(f"found {len(mat_files)} mat files")
+
+    if patient_id_split is not None:
+        logger.info("manually supplied split information: {patient_id_split}")
+    else:
+        patient_ids = natsorted(
+            set([mat_file.split("/")[-1].split("_")[0] for mat_file in mat_files])
+        )
+        pid_strrep = "\n".join(patient_ids)
+        logger.info(f"dataset contains patient ids:\n{pid_strrep}")
+
+        dataset_size = len(patient_ids)
+        split_fractions = [
+            (split_ratio_val / sum(split_ratios)) for split_ratio_val in split_ratios
+        ]
+        logger.info(f"splitting dataset into fractions: {split_fractions}")
+
+        train_fraction, val_fraction, test_fraction = split_fractions
+
+        train_size = int(dataset_size * train_fraction)
+        val_size = int(dataset_size * val_fraction)
+        test_size = int(dataset_size * test_fraction)
+
+        train_patients = patient_ids[:train_size]
+        val_patients = patient_ids[train_size : train_size + val_size]
+        test_patients = patient_ids[train_size + val_size :]
+
+    logger.info(
+        f"train_patients:\n\t{train_patients}\n\nval_patients:\n\t{val_patients}\n\ntest_patients:\n\t{test_patients}"
+    )
+
+    shutil.rmtree(f"{dataset_split_path}/train")
+    shutil.rmtree(f"{dataset_split_path}/val")
+    shutil.rmtree(f"{dataset_split_path}/test")
+
+    os.makedirs(f"{dataset_split_path}/train")
+    os.makedirs(f"{dataset_split_path}/val")
+    os.makedirs(f"{dataset_split_path}/test")
+
+    for mat_file in mat_files:
+        fname = mat_file.split("/")[-1]
+        pid = fname.split("_")[0]
+        if pid in train_patients:
+            shutil.copy(mat_file, f"{dataset_split_path}/train")
+        elif pid in val_patients:
+            shutil.copy(mat_file, f"{dataset_split_path}/val")
+        elif pid in test_patients:
+            shutil.copy(mat_file, f"{dataset_split_path}/test")
