@@ -27,3 +27,9 @@ python main.py train-val-test-split  --dataset-split-path dataset/preprocessed/b
 ```bash
 python main.py trainer --model-names cnn,swin,vit,densenet --modalities US,PA,PAUS --target-size 224,224 --batch-size 16
 ```
+
+#### Testing
+
+```bash
+python main.py tester --weights-root output/20231030103142 --target-size=224,224
+```
