@@ -91,10 +91,11 @@ def trainer(
     batch_size: Annotated[int, typer.Option()] = 32,
     shuffle: Annotated[bool, typer.Option()] = True,
     learning_rate: Annotated[float, typer.Option()] = 1e-3,
-    num_epochs: Annotated[int, typer.Option()] = 100,
+    epochs: Annotated[int, typer.Option()] = 1000,
     wd: Annotated[float, typer.Option()] = 1e-4,
     dropout: Annotated[float, typer.Option()] = 0.5,
     early_stopping_patience: Annotated[int, typer.Option()] = 10,
+    save_frequency: Annotated[int, typer.Option()] = 10,
 ):
     model_names = model_names.split(",")
     logger.info(f"model names: {model_names}")
@@ -157,11 +158,12 @@ def trainer(
                 val_loader,
                 batch_size,
                 learning_rate,
-                num_epochs,
+                epochs,
                 wd,
                 dropout,
                 early_stopping_patience,
                 target_size,
+                save_frequency,
             )
 
 

@@ -78,11 +78,12 @@ def train_model(
     val_loader: DataLoader,
     batch_size: int = 16,
     learning_rate: float = 1e-6,
-    num_epochs: int = 1000,
+    epochs: int = 1000,
     wd: float = 0,
     dropout: float = 0.5,
     early_stopping_patience: int = 50,
     target_size: List[int] = [150, 390],
+    save_frequency: int = 10,
 ):
     if model_name == "cnn":
         model = models.BreastCNN(in_channels=in_channels, image_size=target_size)
@@ -104,7 +105,7 @@ def train_model(
     no_improvement_count = 0
 
     # Training loop
-    for epoch in tqdm(range(num_epochs)):
+    for epoch in tqdm(range(epochs)):
         total_loss = 0.0
 
         true_labels = []
@@ -138,7 +139,7 @@ def train_model(
         train_auc = auc(fpr, tpr)
 
         logger.info(
-            f"Epoch [{epoch + 1}/{num_epochs}] Train Loss: {(total_loss / len(train_loader)):.4f}\tTrain AUC: {train_auc:.2f}\tTrain F1 Score: {f1_train:.2f}\t\tTrain Precision: {precision_train:.2f}\t\t\tTrain Recall: {recall_train:.2f}"
+            f"Epoch [{epoch + 1}/{epochs}] Train Loss: {(total_loss / len(train_loader)):.4f}\tTrain AUC: {train_auc:.2f}\tTrain F1 Score: {f1_train:.2f}\t\tTrain Precision: {precision_train:.2f}\t\t\tTrain Recall: {recall_train:.2f}"
         )
 
         # Validation
@@ -180,9 +181,10 @@ def train_model(
         else:
             no_improvement_count += 1
 
-        torch.save(model.state_dict(), f"{output_dir}/epoch_{epoch + 1}.pth")
+        if (epoch + 1) % save_frequency == 0:
+            torch.save(model.state_dict(), f"{output_dir}/epoch_{epoch + 1}.pth")
         logger.info(
-            f"Epoch [{epoch + 1}/{num_epochs}]\t\t\t Validation Loss: {valid_loss/len(val_loader):.4f}\tValidation AUC: {val_auc:.2f}\tValidation F1 Score: {f1_val:.2f}\tValidation Precision: {precision_val:.2f}\tValidation Recall: {recall_val:.2f}"
+            f"Epoch [{epoch + 1}/{epochs}]\t\t\t Validation Loss: {valid_loss/len(val_loader):.4f}\tValidation AUC: {val_auc:.2f}\tValidation F1 Score: {f1_val:.2f}\tValidation Precision: {precision_val:.2f}\tValidation Recall: {recall_val:.2f}"
         )
 
         if no_improvement_count >= early_stopping_patience:
