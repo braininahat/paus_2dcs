@@ -31,11 +31,11 @@ def prepare_dataset(
     logger.info(f"loading dataset...")
 
     metadata = data.load_metadata(dataset_root, metadata_file)
-    logger.info(f"found metadata: {metadata}")
+    logger.debug(f"found metadata: {metadata}")
 
     patient_directories = data.get_patient_directories(dataset_root)
     patient_ids = data.get_patient_ids(patient_directories)
-    logger.info(f"found patient IDs: {patient_ids}")
+    logger.debug(f"found patient IDs: {patient_ids}")
 
     assert natsorted(metadata.keys()) == natsorted(patient_ids)
     logger.info(f"patient IDs and directories match!")
@@ -59,16 +59,17 @@ def prepare_dataset(
 @app.command()
 def train_val_test_split(
     dataset_split_path: Annotated[Path, typer.Option()],
-    split_ratios: Annotated[str, typer.Option()],
+    split_ratios: Annotated[str, typer.Option()] = None,
     patient_id_split_json: Annotated[Path, typer.Option()] = None,
 ):
-    split_ratios = split_ratios.split(",")
-    split_ratios = [int(split_ratio) for split_ratio in split_ratios]
     if patient_id_split_json is not None:
         with open(patient_id_split_json, "r") as jf:
             patient_id_split = json.load(jf)
     else:
         patient_id_split = None
+        split_ratios = split_ratios.split(",")
+        split_ratios = [int(split_ratio) for split_ratio in split_ratios]
+
     data.split_dataset(dataset_split_path, split_ratios, patient_id_split)
 
 
@@ -96,16 +97,8 @@ def trainer(
     dropout: Annotated[float, typer.Option()] = 0.5,
     early_stopping_patience: Annotated[int, typer.Option()] = 10,
     save_frequency: Annotated[int, typer.Option()] = 10,
+    json_path: Annotated[Path, typer.Option()] = None,
 ):
-    model_names = model_names.split(",")
-    logger.info(f"model names: {model_names}")
-
-    modalities = modalities.split(",")
-    logger.info(f"modalities: {modalities}")
-
-    target_size = target_size.split(",")
-    target_size = [int(size) for size in target_size]
-
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     mode = "train"
 
@@ -115,6 +108,33 @@ def trainer(
     target_dir = output_dir.joinpath(timestamp)
     Path.mkdir(target_dir)
     logger.info(f"created output directory: {target_dir}")
+
+    if json_path is not None:
+        shutil.copy(json_path, target_dir)
+
+        with open(json_path, "r") as jf:
+            config = json.load(jf)
+
+        model_names = config["model_names"]
+        modalities = config["modalities"]
+        target_size = config["target_size"]
+        batch_size = config["batch_size"]
+        learning_rate = config["learning_rate"]
+        epochs = config["epochs"]
+        wd = config["wd"]
+        dropout = config["dropout"]
+        early_stopping_patience = config["early_stopping_patience"]
+        save_frequency = config["save_frequency"]
+
+    else:
+        model_names = model_names.split(",")
+        logger.debug(f"model names: {model_names}")
+
+        modalities = modalities.split(",")
+        logger.debug(f"modalities: {modalities}")
+
+        target_size = target_size.split(",")
+        target_size = [int(size) for size in target_size]
 
     for modality in modalities:
         logger.info(f"training for modality: {modality}")
@@ -152,6 +172,7 @@ def trainer(
             )
             train.train_model(
                 model_name,
+                modality,
                 in_channels,
                 current_target_dir,
                 train_loader,
@@ -165,6 +186,7 @@ def trainer(
                 target_size,
                 save_frequency,
             )
+    target_dir.touch(".completed")
 
 
 @app.command()
@@ -184,7 +206,14 @@ def tester(
     logger.info(f"using device: {device}")
 
     logger.info(f"weights_root: {weights_root.resolve()}")
+
     weights_paths = natsorted(glob(f"{weights_root}/*/*/best*.pth"))
+
+    if Path.exists(weights_root.joinpath("svm")):
+        logger.info("found SVM weights")
+        svm_paths = natsorted(glob(f"{weights_root}/svm/*/*.pkl"))
+
+    weights_paths.extend(svm_paths)
 
     for weights_path in weights_paths:
         logger.info(f"weights_paths: {weights_path}")
