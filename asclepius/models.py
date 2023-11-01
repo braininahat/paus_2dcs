@@ -83,7 +83,7 @@ class BreastCNN(nn.Module):
 
     def _get_linear_input_size(self):
         with torch.no_grad():
-            x = torch.zeros(1, self.in_channels, self.image_size[0], self.image_size[0])
+            x = torch.zeros(1, self.in_channels, self.image_size[0], self.image_size[1])
             x = self.conv1(x)
             x = self.relu(x)
             x = self.maxpool(x)

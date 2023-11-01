@@ -58,9 +58,9 @@ class BreastDataset(Dataset):
             transforms.Resize(self.target_size),
             transforms.ToTensor(),
         ]
-        
+
         logger.info(f"modalities: {modalities}")
-        
+
         if "PA" in modalities:
             self.pa_file_list = natsorted(glob(f"{self.data_dir}/*PA*.mat"))
         if "US" in modalities:
@@ -316,6 +316,11 @@ def split_dataset(
 
     if patient_id_split is not None:
         logger.info("manually supplied split information: {patient_id_split}")
+
+        train_patients = patient_id_split["train"]
+        val_patients = patient_id_split["val"]
+        test_patients = patient_id_split["test"]
+
     else:
         patient_ids = natsorted(
             set([mat_file.split("/")[-1].split("_")[0] for mat_file in mat_files])

@@ -1,12 +1,14 @@
 from pathlib import Path
 from typing import List
 
+import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
 import torch.nn as nn
 from sklearn.metrics import auc, f1_score, precision_score, recall_score, roc_curve
+from sklearn.svm import SVC
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -70,40 +72,21 @@ def get_dataloaders(
         return test_loader
 
 
-def train_model(
-    model_name: str,
-    in_channels: int,
-    output_dir: Path,
-    train_loader: DataLoader,
-    val_loader: DataLoader,
-    batch_size: int = 16,
-    learning_rate: float = 1e-6,
-    epochs: int = 1000,
-    wd: float = 0,
-    dropout: float = 0.5,
-    early_stopping_patience: int = 50,
-    target_size: List[int] = [150, 390],
-    save_frequency: int = 10,
+def train_and_validate(
+    model,
+    optimizer,
+    scheduler,
+    criterion,
+    train_loader,
+    val_loader,
+    epochs,
+    output_dir,
+    save_frequency,
+    early_stopping_patience,
+    device,
 ):
-    if model_name == "cnn":
-        model = models.BreastCNN(in_channels=in_channels, image_size=target_size)
-    elif model_name == "swin":
-        model = models.custom_swin_t(in_channels=in_channels)
-    elif model_name == "vit":
-        model = models.custom_vit_b_16(in_channels=in_channels)
-    elif model_name == "densenet":
-        model = models.custom_densenet(in_channels=in_channels)
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=wd)
-    scheduler = CosineAnnealingLR(optimizer, len(train_loader) / batch_size)
-    criterion = nn.CrossEntropyLoss()
-
     best_auc = 0.0
     no_improvement_count = 0
-
     # Training loop
     for epoch in tqdm(range(epochs)):
         total_loss = 0.0
@@ -138,7 +121,7 @@ def train_model(
         fpr, tpr, _ = roc_curve(true_labels, predicted_labels)
         train_auc = auc(fpr, tpr)
 
-        logger.info(
+        logger.debug(
             f"Epoch [{epoch + 1}/{epochs}] Train Loss: {(total_loss / len(train_loader)):.4f}\tTrain AUC: {train_auc:.2f}\tTrain F1 Score: {f1_train:.2f}\t\tTrain Precision: {precision_train:.2f}\t\t\tTrain Recall: {recall_train:.2f}"
         )
 
@@ -195,6 +178,86 @@ def train_model(
 
         model.train()
 
+
+def train_model(
+    model_name: str,
+    modality: str,
+    in_channels: int,
+    output_dir: Path,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    batch_size: int = 16,
+    learning_rate: float = 1e-6,
+    epochs: int = 1000,
+    wd: float = 0,
+    dropout: float = 0.5,
+    early_stopping_patience: int = 50,
+    target_size: List[int] = [150, 390],
+    save_frequency: int = 10,
+):
+    if model_name == "svm":
+        model = SVC(kernel="linear", probability=True)
+
+        for images, labels in train_loader:
+            images = images.view(images.shape[0], -1)
+            model.fit(images, labels)
+
+        true_labels = []
+        predicted_labels = []
+
+        for images, labels in val_loader:
+            images = images.view(images.shape[0], -1)
+            predicted_labels.extend(model.predict(images))
+            true_labels.extend(labels.numpy())
+
+        f1_val = f1_score(true_labels, predicted_labels, average="weighted")
+        precision_val = precision_score(
+            true_labels, predicted_labels, average="weighted"
+        )
+        recall_val = recall_score(true_labels, predicted_labels, average="weighted")
+        fpr, tpr, _ = roc_curve(true_labels, predicted_labels)
+        val_auc = auc(fpr, tpr)
+
+        logger.info(
+            f"Validation AUC: {val_auc:.2f}\tValidation F1 Score: {f1_val:.2f}\tValidation Precision: {precision_val:.2f}\tValidation Recall: {recall_val:.2f}"
+        )
+
+        # Save model
+        joblib.dump(model, f"{output_dir}/svm.pkl")
+
+    else:
+        if model_name == "cnn":
+            model = models.BreastCNN(in_channels=in_channels, image_size=target_size)
+        elif model_name == "swin":
+            model = models.custom_swin_t(in_channels=in_channels)
+        elif model_name == "vit":
+            model = models.custom_vit_b_16(in_channels=in_channels)
+        elif model_name == "densenet":
+            model = models.custom_densenet(in_channels=in_channels)
+
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=learning_rate, weight_decay=wd
+        )
+        scheduler = CosineAnnealingLR(optimizer, len(train_loader) / batch_size)
+        criterion = nn.CrossEntropyLoss()
+
+        train_and_validate(
+            model,
+            optimizer,
+            scheduler,
+            criterion,
+            train_loader,
+            val_loader,
+            epochs,
+            output_dir,
+            save_frequency,
+            early_stopping_patience,
+            device,
+        )
+
     logger.info("Training finished!")
 
 
@@ -209,47 +272,60 @@ def test_model(
     output_path = Path(weights_path).parent.joinpath("results")
     output_path.mkdir(parents=True, exist_ok=True)
 
-    if "Dual" in modality:
-        in_channels = 4
-    elif "PAUS" in modality:
-        in_channels = 2
+    if model_name == "svm":
+        model = joblib.load(weights_path)
+
+        true_labels = []
+        predicted_labels = []
+        predicted_probs = []
+
+        for images, labels in test_loader:
+            images = images.view(images.shape[0], -1)
+            predicted_probs.extend(model.predict_proba(images))
+            predicted_labels.extend(model.predict(images))
+            true_labels.extend(labels.numpy())
     else:
-        in_channels = 1
+        if "Dual" in modality:
+            in_channels = 4
+        elif "PAUS" in modality:
+            in_channels = 2
+        else:
+            in_channels = 1
 
-    if model_name == "cnn":
-        model = models.BreastCNN(in_channels=in_channels, image_size=target_size)
-    elif model_name == "swin":
-        model = models.custom_swin_t(in_channels=in_channels)
-    elif model_name == "vit":
-        model = models.custom_vit_b_16(in_channels=in_channels)
-    elif model_name == "densenet":
-        model = models.custom_densenet(in_channels=in_channels)
+        if model_name == "cnn":
+            model = models.BreastCNN(in_channels=in_channels, image_size=target_size)
+        elif model_name == "swin":
+            model = models.custom_swin_t(in_channels=in_channels)
+        elif model_name == "vit":
+            model = models.custom_vit_b_16(in_channels=in_channels)
+        elif model_name == "densenet":
+            model = models.custom_densenet(in_channels=in_channels)
 
-    try:
-        model.load_state_dict(torch.load(weights_path, map_location=device))
-    except FileNotFoundError as e:
-        logger.error(f"{weights_path} not found")
-        return
-    model.to(device)
-    model.eval()
+        try:
+            model.load_state_dict(torch.load(weights_path, map_location=device))
+        except FileNotFoundError as e:
+            logger.error(f"{weights_path} not found")
+            return
+        model.to(device)
+        model.eval()
 
-    true_labels = []
-    predicted_labels = []
-    predicted_probs = []
+        true_labels = []
+        predicted_labels = []
+        predicted_probs = []
 
-    with torch.no_grad():
-        for image, label in test_loader:
-            image = image.to(device)
-            label = label.to(device)
+        with torch.no_grad():
+            for image, label in test_loader:
+                image = image.to(device)
+                label = label.to(device)
 
-            output = model(image)
+                output = model(image)
 
-            predicted_probs.extend(output.detach().cpu().numpy())
-            predicted_labels.extend(
-                torch.argmax(output.detach(), dim=1).cpu().numpy()
-            )  # Threshold at 0.5 for binary classification
+                predicted_probs.extend(output.detach().cpu().numpy())
+                predicted_labels.extend(
+                    torch.argmax(output.detach(), dim=1).cpu().numpy()
+                )  # Threshold at 0.5 for binary classification
 
-            true_labels.extend(label.cpu().numpy())
+                true_labels.extend(label.cpu().numpy())
 
     # Calculate F1 score, precision, and recall
 
