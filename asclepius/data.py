@@ -1,6 +1,6 @@
-import shutil
 import json
 import os
+import shutil
 from glob import glob
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -9,6 +9,7 @@ import cv2
 import h5py
 import numpy as np
 import scipy.io as scio
+import skimage
 import torch
 from natsort import natsorted
 from scipy.fftpack import dct
@@ -28,12 +29,14 @@ class BreastDataset(Dataset):
         num_classes=2,
         use_dct=False,
         use_gabor=False,
+        use_glcm=False,
     ):
         # TODO add GLCM
         self.data_dir = data_dir
         self.modalities = modalities
         self.target_size = target_size
         self.num_classes = num_classes
+        self.use_glcm = use_glcm
 
         # Define the parameters for the Gabor filter
         ksize = 31  # Size of the filter kernel
@@ -112,6 +115,19 @@ class BreastDataset(Dataset):
             us_frame = self.transform((us_frame * 255).astype(np.uint8))
             us_frame = torch.Tensor(us_frame).float()
 
+        if self.use_glcm:
+            # Extract GLCM features
+            if "PA" in self.modalities:
+                pa_frame = self.extract_glcm(
+                    pa_frame.squeeze().numpy().astype(np.uint8)
+                )
+                pa_frame = torch.Tensor(pa_frame).squeeze().float().unsqueeze(0)
+            if "US" in self.modalities:
+                us_frame = self.extract_glcm(
+                    us_frame.squeeze().numpy().astype(np.uint8)
+                )
+                us_frame = torch.Tensor(us_frame).squeeze().float().unsqueeze(0)
+
         if "PA" in self.modalities and "US" in self.modalities:
             frame = torch.cat([pa_frame, us_frame], axis=0).float()
             label = torch.tensor(label)
@@ -120,6 +136,16 @@ class BreastDataset(Dataset):
             return pa_frame, label
         elif "US" in self.modalities:
             return us_frame, label
+
+    def extract_glcm(self, image):
+        # Calculate GLCM
+        glcm = (
+            skimage.feature.graycomatrix(
+                image, [1], [0], levels=256, symmetric=True, normed=True
+            )
+            * 255.0
+        ).astype(np.uint8)
+        return glcm
 
 
 def loadmat_custom(path):

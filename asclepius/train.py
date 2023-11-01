@@ -27,6 +27,7 @@ def get_dataloaders(
     num_classes: int = 2,
     use_dct: bool = False,
     use_gabor: bool = False,
+    use_glcm: bool = False,
     batch_size: int = 32,
     shuffle: bool = True,
 ):
@@ -43,6 +44,7 @@ def get_dataloaders(
             num_classes,
             use_dct,
             use_gabor,
+            use_glcm,
         )
         val_dataset = BreastDataset(
             f"{dataset_dir}/val",
@@ -51,6 +53,7 @@ def get_dataloaders(
             num_classes,
             use_dct,
             use_gabor,
+            use_glcm,
         )
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle)
@@ -65,6 +68,7 @@ def get_dataloaders(
             num_classes,
             use_dct,
             use_gabor,
+            use_glcm,
         )
 
         test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)

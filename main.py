@@ -147,6 +147,9 @@ def trainer(
             use_gabor = True if "Gabor" in modality else False
             logger.info(f"using Gabor: {use_gabor}")
 
+            use_glcm = True if "GLCM" in modality else False
+            logger.info(f"using GLCM: {use_glcm}")
+
             current_target_dir = target_dir.joinpath(f"{model_name}/{modality}/")
             Path.mkdir(current_target_dir, parents=True)
 
@@ -167,6 +170,7 @@ def trainer(
                 num_classes,
                 use_dct,
                 use_gabor,
+                use_glcm,
                 batch_size,
                 shuffle,
             )
@@ -227,6 +231,8 @@ def tester(
         logger.info(f"using DCT: {use_dct}")
         use_gabor = True if "Gabor" in modality else False
         logger.info(f"using Gabor: {use_gabor}")
+        use_glcm = True if "GLCM" in modality else False
+        logger.info(f"using GLCM: {use_glcm}")
 
         test_loader = train.get_dataloaders(
             dataset_root,
@@ -237,6 +243,7 @@ def tester(
             num_classes,
             use_dct,
             use_gabor,
+            use_glcm,
             batch_size=1,
             shuffle=False,
         )
