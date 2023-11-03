@@ -21,6 +21,7 @@ def prepare_dataset(
     split: Annotated[str, typer.Option()],
     dataset_root: Path = Path("dataset").resolve(),
     metadata_file: Annotated[str, typer.Option()] = "metadata",
+    buffer: Annotated[int, typer.Option()] = 10,
 ):
     target_dir = dataset_root.joinpath(f"preprocessed/{split}")
     if Path.exists(target_dir):
@@ -48,7 +49,12 @@ def prepare_dataset(
             mat_files, patient_metadata
         )
         data.label_and_save_frames(
-            dataset_root, split, patient_id, transformed_patient_data, patient_metadata
+            dataset_root,
+            split,
+            patient_id,
+            transformed_patient_data,
+            patient_metadata,
+            buffer,
         )
     logger.info(
         f"patient data preprocessed and saved to: {dataset_root.joinpath('preprocessed')}"
@@ -166,7 +172,7 @@ def trainer(
                 split,
                 mode,
                 modality,
-                target_size,
+                [256, 256] if use_glcm else target_size,
                 num_classes,
                 use_dct,
                 use_gabor,
@@ -187,10 +193,10 @@ def trainer(
                 wd,
                 dropout,
                 early_stopping_patience,
-                target_size,
+                [256, 256] if use_glcm else target_size,
                 save_frequency,
             )
-    target_dir.touch(".completed")
+    target_dir.touch("completed")
 
 
 @app.command()
@@ -229,8 +235,10 @@ def tester(
 
         use_dct = True if "DCT" in modality else False
         logger.info(f"using DCT: {use_dct}")
+
         use_gabor = True if "Gabor" in modality else False
         logger.info(f"using Gabor: {use_gabor}")
+
         use_glcm = True if "GLCM" in modality else False
         logger.info(f"using GLCM: {use_glcm}")
 
@@ -239,7 +247,7 @@ def tester(
             split,
             "test",
             modality,
-            target_size,
+            [256, 256] if use_glcm else target_size,
             num_classes,
             use_dct,
             use_gabor,
@@ -249,51 +257,13 @@ def tester(
         )
 
         train.test_model(
-            weights_path, model_name, modality, test_loader, device, target_size
+            weights_path,
+            model_name,
+            modality,
+            test_loader,
+            device,
+            [256, 256] if use_glcm else target_size,
         )
-
-
-# @app.command()
-# def plot_all_roc_curves(
-#     weights_root: Annotated[Path, typer.Option()],
-#     dataset_root: Annotated[Path, typer.Option()] = Path("dataset"),
-#     split: Annotated[str, typer.Option()] = "bal",
-#     target_size: Annotated[str, typer.Option()] = "150,390",
-#     num_classes: Annotated[int, typer.Option()] = 2,
-#     device: Annotated[str, typer.Option()] = None,
-# ):
-#     if device is None:
-#         device = "cuda" if torch.cuda.is_available() else "cpu"
-#     logger.info(f"using device: {device}")
-
-#     logger.info(f"weights_root: {weights_root.resolve()}")
-#     weights_paths = natsorted(glob(f"{weights_root}/*/*/best*.pth"))
-
-#     for weights_path in weights_paths:
-#         logger.info(f"weights_paths: {weights_path}")
-#         model_name = weights_path.split("/")[-3]
-#         logger.info(f"model: {model_name}")
-
-#         modality = weights_path.split("/")[-2]
-#         logger.info(f"modality: {modality}")
-
-#         use_dct = True if "DCT" in modality else False
-#         logger.info(f"using DCT: {use_dct}")
-#         use_gabor = True if "Gabor" in modality else False
-#         logger.info(f"using Gabor: {use_gabor}")
-
-#         test_loader = train.get_dataloaders(
-#             dataset_root,
-#             split,
-#             "test",
-#             modality,
-#             target_size,
-#             num_classes,
-#             use_dct,
-#             use_gabor,
-#             batch_size=1,
-#             shuffle
-#             )
 
 
 if __name__ == "__main__":

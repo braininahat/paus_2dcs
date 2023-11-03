@@ -74,7 +74,7 @@
 
     "pa": {
       "flip": null,
-      "half": "upper",
+      "half": "lower",
       "trim": {
         "0": [0, null],
         "1": [0, -5],
@@ -84,7 +84,7 @@
 
     "us": {
       "flip": null,
-      "half": "upper",
+      "half": "lower",
       "trim": {
         "0": [0, null],
         "1": [0, -5],

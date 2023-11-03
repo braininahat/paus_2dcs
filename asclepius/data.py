@@ -291,7 +291,12 @@ def calculate_split_bounds(split: str, frame_count: int, metadata: dict):
 
 
 def label_and_save_frames(
-    data_root: Path, split: str, patient_id: str, transformed_arrs: Dict, metadata: Dict
+    data_root: Path,
+    split: str,
+    patient_id: str,
+    transformed_arrs: Dict,
+    metadata: Dict,
+    buffer: int = 10,
 ):
     target_dir = data_root.joinpath(f"preprocessed/{split}")
     os.makedirs(target_dir, exist_ok=True)
@@ -300,6 +305,11 @@ def label_and_save_frames(
     us_arr_shape = transformed_arrs["us_arr"].shape
 
     tumor_bounds = metadata["tumor_bounds"]["sides"]
+    discard_bounds = [
+        [tumor_bounds[0] - buffer // 2, tumor_bounds[0] + buffer // 2],
+        [tumor_bounds[1] - buffer // 2, tumor_bounds[1] + buffer // 2],
+    ]
+    tumor_bounds = [tumor_bounds[0] + buffer // 2, tumor_bounds[1] - buffer // 2]
 
     assert pa_arr_shape[1:] == us_arr_shape[1:]
 
@@ -316,6 +326,10 @@ def label_and_save_frames(
             continue
         elif cs_index > end_index:
             break
+        elif (cs_index > discard_bounds[0][0] and cs_index < discard_bounds[0][1]) or (
+            cs_index > discard_bounds[1][0] and cs_index < discard_bounds[1][1]
+        ):
+            continue
         else:
             if cs_index > tumor_start and cs_index < tumor_end:
                 label = "tumor"
@@ -374,9 +388,9 @@ def split_dataset(
         f"train_patients:\n\t{train_patients}\n\nval_patients:\n\t{val_patients}\n\ntest_patients:\n\t{test_patients}"
     )
 
-    shutil.rmtree(f"{dataset_split_path}/train")
-    shutil.rmtree(f"{dataset_split_path}/val")
-    shutil.rmtree(f"{dataset_split_path}/test")
+    shutil.rmtree(f"{dataset_split_path}/train", ignore_errors=True)
+    shutil.rmtree(f"{dataset_split_path}/val", ignore_errors=True)
+    shutil.rmtree(f"{dataset_split_path}/test", ignore_errors=True)
 
     os.makedirs(f"{dataset_split_path}/train")
     os.makedirs(f"{dataset_split_path}/val")

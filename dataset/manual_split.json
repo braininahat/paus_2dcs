@@ -1,15 +1,22 @@
 {
   "train": [
-    "RP065",
-    "RP067",
-    "RP068",
-    "RP070",
-    "RP075",
-    "RP079",
-    "RP088",
-    "RP090",
-    "RP093"
+    //63 maybe
+    // "RP065",
+    "RP067", //good
+    "RP068", //good
+    // "RP070",
+    // "RP075",
+    "RP079" //good
+    // "RP088", //remove
+    // "RP090", //remove
+    // "RP093"
   ],
-  "val": ["RP094", "RP096"],
-  "test": ["RP097", "RP101"]
+  "val": [
+    "RP094" //good
+    // "RP096" //remove
+  ],
+  "test": [
+    // "RP097",
+    "RP101" //good
+  ]
 }
