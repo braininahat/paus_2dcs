@@ -81,6 +81,217 @@ def train_val_test_split(
     data.split_dataset(dataset_split_path, split_ratios, patient_id_split)
 
 
+def train_single_model(
+    model_name: str,
+    modality: str,
+    target_dir: Path,
+    dataset_root: Path,
+    split: str,
+    mode: str,
+    target_size: list,
+    num_classes: int,
+    batch_size: int,
+    shuffle: bool,
+    hflip: bool,
+    learning_rate: float,
+    epochs: int,
+    wd: float,
+    dropout: float,
+    early_stopping_patience: int,
+    save_frequency: int,
+    scheduler: str,
+    run: wandb.run,
+):
+    logger.info(f"training model: {model_name}")
+
+    use_dct = True if "DCT" in modality else False
+    logger.info(f"using DCT: {use_dct}")
+
+    use_gabor = True if "Gabor" in modality else False
+    logger.info(f"using Gabor: {use_gabor}")
+
+    use_glcm = True if "GLCM" in modality else False
+    logger.info(f"using GLCM: {use_glcm}")
+
+    current_target_dir = target_dir.joinpath(f"{model_name}/{modality}/")
+    Path.mkdir(current_target_dir, parents=True)
+
+    if "Dual" in modality:
+        in_channels = 4
+    elif "PAUS" in modality:
+        in_channels = 2
+    else:
+        in_channels = 1
+    logger.info(f"input channels: {in_channels}")
+
+    train_loader, val_loader = train.get_dataloaders(
+        dataset_root,
+        split,
+        mode,
+        modality,
+        [256, 256] if use_glcm else target_size,
+        num_classes,
+        use_dct,
+        use_gabor,
+        use_glcm,
+        batch_size,
+        shuffle,
+        hflip,
+    )
+    train.train_model(
+        model_name,
+        modality,
+        in_channels,
+        current_target_dir,
+        train_loader,
+        val_loader,
+        batch_size,
+        learning_rate,
+        epochs,
+        wd,
+        dropout,
+        early_stopping_patience,
+        [256, 256] if use_glcm else target_size,
+        save_frequency,
+        scheduler,
+        run,
+    )
+    return
+
+
+def sweep_trainer():
+    run = wandb.init()
+
+    timestamp = wandb.config.timestamp
+    model_name = wandb.config.model_name
+    modality = wandb.config.modality
+    target_size = wandb.config.target_size
+    batch_size = wandb.config.batch_size
+    learning_rate = wandb.config.learning_rate
+    epochs = wandb.config.epochs
+    wd = wandb.config.wd
+    dropout = wandb.config.dropout
+    early_stopping_patience = wandb.config.early_stopping_patience
+    save_frequency = wandb.config.save_frequency
+    scheduler = wandb.config.scheduler
+    dataset_root = Path(wandb.config.dataset_root).resolve()
+    split = wandb.config.split
+    mode = wandb.config.mode
+    num_classes = wandb.config.num_classes
+    shuffle = wandb.config.shuffle
+    hflip = wandb.config.hflip
+
+    target_str = str(",".join([str(dim) for dim in target_size]))
+    target_dir = Path(
+        f"sweep/{timestamp}/{target_str}/{learning_rate}/{batch_size}/{wd}/{dropout}/"
+    ).resolve()
+
+    logger.info(f"training model: {model_name}")
+
+    use_dct = True if "DCT" in modality else False
+    logger.info(f"using DCT: {use_dct}")
+
+    use_gabor = True if "Gabor" in modality else False
+    logger.info(f"using Gabor: {use_gabor}")
+
+    use_glcm = True if "GLCM" in modality else False
+    logger.info(f"using GLCM: {use_glcm}")
+
+    current_target_dir = target_dir.joinpath(f"{model_name}/{modality}/")
+    Path.mkdir(current_target_dir, parents=True)
+
+    if "Dual" in modality:
+        in_channels = 4
+    elif "PAUS" in modality:
+        in_channels = 2
+    else:
+        in_channels = 1
+    logger.info(f"input channels: {in_channels}")
+
+    train_loader, val_loader = train.get_dataloaders(
+        dataset_root,
+        split,
+        mode,
+        modality,
+        [256, 256] if use_glcm else target_size,
+        num_classes,
+        use_dct,
+        use_gabor,
+        use_glcm,
+        batch_size,
+        shuffle,
+        hflip,
+    )
+    train.train_model(
+        model_name,
+        modality,
+        in_channels,
+        current_target_dir,
+        train_loader,
+        val_loader,
+        batch_size,
+        learning_rate,
+        epochs,
+        wd,
+        dropout,
+        early_stopping_patience,
+        [256, 256] if use_glcm else target_size,
+        save_frequency,
+        scheduler,
+        run,
+    )
+
+    return
+
+
+@app.command()
+def sweep():
+    sweep_config = {
+        "method": "grid",
+        "metric": {"name": "val_auc", "goal": "maximize"},
+        "parameters": {
+            "model_name": {"values": ["cnn", "densenet", "swin", "svm"]},
+            "modality": {
+                "values": [
+                    "US",
+                    "PA",
+                    "PAUS",
+                    "DCTUS",
+                    "DCTPA",
+                    "DCTPAUS",
+                    "GaborUS",
+                    "GaborPA",
+                    "GaborPAUS",
+                    "GLCMUS",
+                    "GLCMPA",
+                    "GLCMPAUS",
+                ]
+            },
+            "batch_size": {"values": [1, 2, 4, 8, 16, 32, 64]},
+            "dataset_root": {
+                "value": str(Path("dataset/preprocessed").resolve()),
+            },
+            "dropout": {"values": [0.3, 0.5, 0.7]},
+            "early_stopping_patience": {"value": 50},
+            "epochs": {"value": 1000},
+            "hflip": {"value": False},
+            "learning_rate": {"values": [1e-3, 1e-4]},
+            "mode": {"value": "train"},
+            "num_classes": {"value": 2},
+            "save_frequency": {"value": 10},
+            "scheduler": {"value": "exponential"},
+            "shuffle": {"value": True},
+            "split": {"value": "bal"},
+            "target_size": {"values": [[150, 390], [256, 256]]},
+            "timestamp": {"value": datetime.now().strftime("%Y%m%d%H%M%S")},
+            "wd": {"values": [1e-4, 1e-5]},
+        },
+    }
+    sweep_id = wandb.sweep(sweep_config, project="paus_2dcs")
+    wandb.agent(sweep_id, function=sweep_trainer)
+    return
+
+
 @app.command()
 def trainer(
     model_names: Annotated[str, typer.Option()] = [
@@ -171,56 +382,23 @@ def trainer(
                         "scheduler": scheduler,
                     },
                 )
-                logger.info(f"training model: {model_name}")
-
-                use_dct = True if "DCT" in modality else False
-                logger.info(f"using DCT: {use_dct}")
-
-                use_gabor = True if "Gabor" in modality else False
-                logger.info(f"using Gabor: {use_gabor}")
-
-                use_glcm = True if "GLCM" in modality else False
-                logger.info(f"using GLCM: {use_glcm}")
-
-                current_target_dir = target_dir.joinpath(f"{model_name}/{modality}/")
-                Path.mkdir(current_target_dir, parents=True)
-
-                if "Dual" in modality:
-                    in_channels = 4
-                elif "PAUS" in modality:
-                    in_channels = 2
-                else:
-                    in_channels = 1
-                logger.info(f"input channels: {in_channels}")
-
-                train_loader, val_loader = train.get_dataloaders(
+                train_single_model(
+                    model_name,
+                    modality,
+                    target_dir,
                     dataset_root,
                     split,
                     mode,
-                    modality,
-                    [256, 256] if use_glcm else target_size,
+                    target_size,
                     num_classes,
-                    use_dct,
-                    use_gabor,
-                    use_glcm,
                     batch_size,
                     shuffle,
                     hflip,
-                )
-                train.train_model(
-                    model_name,
-                    modality,
-                    in_channels,
-                    current_target_dir,
-                    train_loader,
-                    val_loader,
-                    batch_size,
                     learning_rate,
                     epochs,
                     wd,
                     dropout,
                     early_stopping_patience,
-                    [256, 256] if use_glcm else target_size,
                     save_frequency,
                     scheduler,
                     run,
