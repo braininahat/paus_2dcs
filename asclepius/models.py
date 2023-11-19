@@ -78,7 +78,7 @@ class BreastCNN(nn.Module):
         x = self.maxpool(x)
         x = self.flatten(x)
         x = self.fc1(x)
-        x = self.softmax(x)
+        # x = self.softmax(x)
         return x
 
     def _get_linear_input_size(self):
@@ -109,13 +109,9 @@ def custom_vit_b_16(in_channels):
 
 
 def custom_densenet(in_channels):
-    model = models.DenseNet(12, [4, 8, 6], 64)
+    model = models.DenseNet(12, [4, 8, 6], 64, num_classes=2)
     model.features.conv0 = nn.Conv2d(
-        in_channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False
-    )
-    num_features = model.classifier.in_features
-    model.classifier = nn.Sequential(
-        nn.Linear(num_features, 2),
+        in_channels, 64, kernel_size=(5, 15), stride=(3, 5), padding=(3, 5), bias=False
     )
 
     return model

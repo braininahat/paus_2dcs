@@ -14,12 +14,13 @@
     "GaborPA",
     "GaborPAUS"
   ],
-  "target_size": [150, 390],
+  "target_size": [256, 256],
   "batch_size": 16,
-  "learning_rate": 1e-6,
+  "learning_rate": 1e-3,
   "epochs": 1000,
   "wd": 1e-4,
   "dropout": 0.5,
   "early_stopping_patience": 50,
-  "save_frequency": 10
+  "save_frequency": 10,
+  "scheduler": "exponential"
 }

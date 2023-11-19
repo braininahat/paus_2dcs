@@ -104,6 +104,8 @@ def trainer(
     early_stopping_patience: Annotated[int, typer.Option()] = 10,
     save_frequency: Annotated[int, typer.Option()] = 10,
     json_path: Annotated[Path, typer.Option()] = None,
+    hflip: Annotated[bool, typer.Option()] = False,
+    scheduler: Annotated[str, typer.Option()] = "exponential",
 ):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     mode = "train"
@@ -111,8 +113,12 @@ def trainer(
     if not Path.exists(output_dir):
         logger.info(f"creating parent output directory: {output_dir}")
         Path.mkdir(output_dir)
-    target_dir = output_dir.joinpath(timestamp)
-    Path.mkdir(target_dir)
+    if output_dir == Path("output").resolve():
+        target_dir = output_dir.joinpath(timestamp)
+        Path.mkdir(target_dir)
+    else:
+        target_dir = output_dir
+
     logger.info(f"created output directory: {target_dir}")
 
     if json_path is not None:
@@ -131,6 +137,7 @@ def trainer(
         dropout = config["dropout"]
         early_stopping_patience = config["early_stopping_patience"]
         save_frequency = config["save_frequency"]
+        scheduler = config["scheduler"]
 
     else:
         model_names = model_names.split(",")
@@ -141,62 +148,72 @@ def trainer(
 
         target_size = target_size.split(",")
         target_size = [int(size) for size in target_size]
+    try:
+        for modality in modalities:
+            logger.info(f"training for modality: {modality}")
+            for model_name in model_names:
+                logger.info(f"training model: {model_name}")
 
-    for modality in modalities:
-        logger.info(f"training for modality: {modality}")
-        for model_name in model_names:
-            logger.info(f"training model: {model_name}")
+                use_dct = True if "DCT" in modality else False
+                logger.info(f"using DCT: {use_dct}")
 
-            use_dct = True if "DCT" in modality else False
-            logger.info(f"using DCT: {use_dct}")
+                use_gabor = True if "Gabor" in modality else False
+                logger.info(f"using Gabor: {use_gabor}")
 
-            use_gabor = True if "Gabor" in modality else False
-            logger.info(f"using Gabor: {use_gabor}")
+                use_glcm = True if "GLCM" in modality else False
+                logger.info(f"using GLCM: {use_glcm}")
 
-            use_glcm = True if "GLCM" in modality else False
-            logger.info(f"using GLCM: {use_glcm}")
+                current_target_dir = target_dir.joinpath(f"{model_name}/{modality}/")
+                Path.mkdir(current_target_dir, parents=True)
 
-            current_target_dir = target_dir.joinpath(f"{model_name}/{modality}/")
-            Path.mkdir(current_target_dir, parents=True)
+                if "Dual" in modality:
+                    in_channels = 4
+                elif "PAUS" in modality:
+                    in_channels = 2
+                else:
+                    in_channels = 1
+                logger.info(f"input channels: {in_channels}")
 
-            if "Dual" in modality:
-                in_channels = 4
-            elif "PAUS" in modality:
-                in_channels = 2
-            else:
-                in_channels = 1
-            logger.info(f"input channels: {in_channels}")
-
-            train_loader, val_loader = train.get_dataloaders(
-                dataset_root,
-                split,
-                mode,
-                modality,
-                [256, 256] if use_glcm else target_size,
-                num_classes,
-                use_dct,
-                use_gabor,
-                use_glcm,
-                batch_size,
-                shuffle,
-            )
-            train.train_model(
-                model_name,
-                modality,
-                in_channels,
-                current_target_dir,
-                train_loader,
-                val_loader,
-                batch_size,
-                learning_rate,
-                epochs,
-                wd,
-                dropout,
-                early_stopping_patience,
-                [256, 256] if use_glcm else target_size,
-                save_frequency,
-            )
-    target_dir.touch("completed")
+                train_loader, val_loader = train.get_dataloaders(
+                    dataset_root,
+                    split,
+                    mode,
+                    modality,
+                    [256, 256] if use_glcm else target_size,
+                    num_classes,
+                    use_dct,
+                    use_gabor,
+                    use_glcm,
+                    batch_size,
+                    shuffle,
+                    hflip,
+                )
+                train.train_model(
+                    model_name,
+                    modality,
+                    in_channels,
+                    current_target_dir,
+                    train_loader,
+                    val_loader,
+                    batch_size,
+                    learning_rate,
+                    epochs,
+                    wd,
+                    dropout,
+                    early_stopping_patience,
+                    [256, 256] if use_glcm else target_size,
+                    save_frequency,
+                    scheduler,
+                )
+    except Exception as e:
+        logger.error(e)
+        logger.error("training failed!")
+        target_dir.joinpath("failed").touch()
+        return
+    else:
+        logger.info("SUCCESS")
+        target_dir.joinpath("completed").touch()
+        return
 
 
 @app.command()
@@ -223,7 +240,7 @@ def tester(
         logger.info("found SVM weights")
         svm_paths = natsorted(glob(f"{weights_root}/svm/*/*.pkl"))
 
-    weights_paths.extend(svm_paths)
+        weights_paths.extend(svm_paths)
 
     for weights_path in weights_paths:
         logger.info(f"weights_paths: {weights_path}")

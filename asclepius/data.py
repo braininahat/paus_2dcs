@@ -15,7 +15,7 @@ from natsort import natsorted
 from scipy.fftpack import dct
 from skimage.exposure import rescale_intensity
 from torch.utils.data import Dataset
-from torchvision import transforms
+from torchvision.transforms import v2 as transforms
 
 from asclepius.config import logger
 
@@ -30,13 +30,15 @@ class BreastDataset(Dataset):
         use_dct=False,
         use_gabor=False,
         use_glcm=False,
+        hflip=False,
+        dual_mode=False,
     ):
-        # TODO add GLCM
         self.data_dir = data_dir
         self.modalities = modalities
         self.target_size = target_size
         self.num_classes = num_classes
         self.use_glcm = use_glcm
+        self.hflip = hflip
 
         # Define the parameters for the Gabor filter
         ksize = 31  # Size of the filter kernel
@@ -131,11 +133,14 @@ class BreastDataset(Dataset):
         if "PA" in self.modalities and "US" in self.modalities:
             frame = torch.cat([pa_frame, us_frame], axis=0).float()
             label = torch.tensor(label)
-            return frame, label
         elif "PA" in self.modalities:
-            return pa_frame, label
+            frame = pa_frame
         elif "US" in self.modalities:
-            return us_frame, label
+            frame = us_frame
+
+        if self.hflip:
+            frame = transforms.RandomHorizontalFlip(p=0.5)(frame)
+        return frame, label
 
     def extract_glcm(self, image):
         # Calculate GLCM
@@ -259,10 +264,13 @@ def calculate_split_bounds(split: str, frame_count: int, metadata: dict):
     right_gap = end_index - tumor_bounds[1]
     left_gap = tumor_bounds[0]
 
-    if split == "bal":
+    if split in ["aug", "bal"]:
         tumor_frame_count = tumor_bounds[1] - tumor_bounds[0]
 
-        pad_width = tumor_frame_count // 2
+        if split == "aug":
+            pad_width = tumor_frame_count
+        elif split == "bal":
+            pad_width = tumor_frame_count // 2
 
         near_left = False
         near_right = False
@@ -333,6 +341,29 @@ def label_and_save_frames(
         else:
             if cs_index > tumor_start and cs_index < tumor_end:
                 label = "tumor"
+                if split == "aug":
+                    scio.savemat(
+                        str(
+                            target_dir.joinpath(f"{patient_id}_PA_{cs_index}_flip.mat")
+                        ),
+                        {
+                            "frame": np.fliplr(
+                                np.squeeze(pa_norm[:, :, cs_index]).copy()
+                            ),
+                            "label": label,
+                        },
+                    )
+                    scio.savemat(
+                        str(
+                            target_dir.joinpath(f"{patient_id}_US_{cs_index}_flip.mat")
+                        ),
+                        {
+                            "frame": np.fliplr(
+                                np.squeeze(us_norm[:, :, cs_index]).copy()
+                            ),
+                            "label": label,
+                        },
+                    )
             else:
                 label = "clean"
             scio.savemat(

@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import auc, f1_score, precision_score, recall_score, roc_curve
 from sklearn.svm import SVC
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, ExponentialLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -30,6 +30,7 @@ def get_dataloaders(
     use_glcm: bool = False,
     batch_size: int = 32,
     shuffle: bool = True,
+    hflip: bool = False,
 ):
     dataset_dir = dataset_root.joinpath(split)
     if not Path.exists(dataset_dir):
@@ -45,6 +46,7 @@ def get_dataloaders(
             use_dct,
             use_gabor,
             use_glcm,
+            hflip=hflip,
         )
         val_dataset = BreastDataset(
             f"{dataset_dir}/val",
@@ -77,17 +79,17 @@ def get_dataloaders(
 
 
 def train_and_validate(
-    model,
-    optimizer,
-    scheduler,
-    criterion,
-    train_loader,
-    val_loader,
-    epochs,
-    output_dir,
-    save_frequency,
-    early_stopping_patience,
-    device,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    criterion: nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    epochs: int,
+    output_dir: Path,
+    save_frequency: int,
+    early_stopping_patience: int,
+    device: str = "cuda:0",
 ):
     best_auc = 0.0
     no_improvement_count = 0
@@ -104,7 +106,7 @@ def train_and_validate(
             images = images.to(device)
             labels = labels.to(device)
 
-            outputs = model(images)
+            outputs = model(images)  # logits / confidence scores (unnormalized)
 
             loss = criterion(outputs, labels)
             loss.backward()
@@ -125,8 +127,8 @@ def train_and_validate(
         fpr, tpr, _ = roc_curve(true_labels, predicted_labels)
         train_auc = auc(fpr, tpr)
 
-        logger.debug(
-            f"Epoch [{epoch + 1}/{epochs}] Train Loss: {(total_loss / len(train_loader)):.4f}\tTrain AUC: {train_auc:.2f}\tTrain F1 Score: {f1_train:.2f}\t\tTrain Precision: {precision_train:.2f}\t\t\tTrain Recall: {recall_train:.2f}"
+        logger.info(
+            f"Epoch [{epoch + 1}/{epochs}]\tLearning Rate: {scheduler.get_last_lr()[0]:.8f}\tTrain Loss: {(total_loss / len(train_loader)):.4f}\tTrain AUC: {train_auc:.2f}\tTrain F1 Score: {f1_train:.2f}\t\tTrain Precision: {precision_train:.2f}\t\t\tTrain Recall: {recall_train:.2f}"
         )
 
         # Validation
@@ -143,7 +145,7 @@ def train_and_validate(
 
                 outputs = model(images)
 
-                valid_loss += criterion(outputs, labels)
+                valid_loss += criterion(outputs, labels).item()
 
                 predicted_labels.extend(
                     torch.argmax(outputs.detach(), dim=1).cpu().numpy()
@@ -191,13 +193,14 @@ def train_model(
     train_loader: DataLoader,
     val_loader: DataLoader,
     batch_size: int = 16,
-    learning_rate: float = 1e-6,
+    learning_rate: float = 1e-4,
     epochs: int = 1000,
     wd: float = 0,
     dropout: float = 0.5,
     early_stopping_patience: int = 50,
     target_size: List[int] = [150, 390],
     save_frequency: int = 10,
+    scheduler: str = "exponential",
 ):
     if model_name == "svm":
         model = SVC(kernel="linear", probability=True)
@@ -245,7 +248,10 @@ def train_model(
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=learning_rate, weight_decay=wd
         )
-        scheduler = CosineAnnealingLR(optimizer, len(train_loader) / batch_size)
+        if scheduler == "exponential":
+            scheduler = ExponentialLR(optimizer, gamma=0.95, last_epoch=-1)
+        elif scheduler == "cosine":
+            scheduler = CosineAnnealingLR(optimizer, len(train_loader) / batch_size)
         criterion = nn.CrossEntropyLoss()
 
         train_and_validate(
