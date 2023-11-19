@@ -3,9 +3,11 @@ import shutil
 from datetime import datetime
 from glob import glob
 from pathlib import Path
+from pyrsistent import b
 
 import torch
 import typer
+import wandb
 from natsort import natsorted
 from tqdm import tqdm
 from typing_extensions import Annotated
@@ -106,6 +108,7 @@ def trainer(
     json_path: Annotated[Path, typer.Option()] = None,
     hflip: Annotated[bool, typer.Option()] = False,
     scheduler: Annotated[str, typer.Option()] = "exponential",
+    sweep: Annotated[bool, typer.Option()] = False,
 ):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     mode = "train"
@@ -138,7 +141,6 @@ def trainer(
         early_stopping_patience = config["early_stopping_patience"]
         save_frequency = config["save_frequency"]
         scheduler = config["scheduler"]
-
     else:
         model_names = model_names.split(",")
         logger.debug(f"model names: {model_names}")
@@ -152,6 +154,23 @@ def trainer(
         for modality in modalities:
             logger.info(f"training for modality: {modality}")
             for model_name in model_names:
+                run = wandb.init(
+                    project="paus_2dcs",
+                    name=f"{timestamp}_{model_name}_{modality}_{split}",
+                    config={
+                        "model_names": model_names,
+                        "modalities": modalities,
+                        "target_size": target_size,
+                        "batch_size": batch_size,
+                        "learning_rate": learning_rate,
+                        "epochs": epochs,
+                        "wd": wd,
+                        "dropout": dropout,
+                        "early_stopping_patience": early_stopping_patience,
+                        "save_frequency": save_frequency,
+                        "scheduler": scheduler,
+                    },
+                )
                 logger.info(f"training model: {model_name}")
 
                 use_dct = True if "DCT" in modality else False
@@ -204,6 +223,7 @@ def trainer(
                     [256, 256] if use_glcm else target_size,
                     save_frequency,
                     scheduler,
+                    run,
                 )
     except Exception as e:
         logger.error(e)

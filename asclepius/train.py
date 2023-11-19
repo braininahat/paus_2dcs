@@ -7,6 +7,7 @@ import numpy as np
 import seaborn as sns
 import torch
 import torch.nn as nn
+import wandb
 from sklearn.metrics import auc, f1_score, precision_score, recall_score, roc_curve
 from sklearn.svm import SVC
 from torch.optim.lr_scheduler import CosineAnnealingLR, ExponentialLR
@@ -90,6 +91,7 @@ def train_and_validate(
     save_frequency: int,
     early_stopping_patience: int,
     device: str = "cuda:0",
+    wandb_run: wandb.run = None,
 ):
     best_auc = 0.0
     no_improvement_count = 0
@@ -183,6 +185,22 @@ def train_and_validate(
             break
 
         model.train()
+        wandb_run.log(
+            {
+                "epoch": epoch + 1,
+                "train_loss": total_loss / len(train_loader),
+                "train_auc": train_auc,
+                "train_f1": f1_train,
+                "train_precision": precision_train,
+                "train_recall": recall_train,
+                "val_loss": valid_loss / len(val_loader),
+                "val_auc": val_auc,
+                "val_f1": f1_val,
+                "val_precision": precision_val,
+                "val_recall": recall_val,
+            }
+        )
+    wandb_run.finish()
 
 
 def train_model(
@@ -201,6 +219,7 @@ def train_model(
     target_size: List[int] = [150, 390],
     save_frequency: int = 10,
     scheduler: str = "exponential",
+    wandb_run: wandb.run = None,
 ):
     if model_name == "svm":
         model = SVC(kernel="linear", probability=True)
@@ -266,6 +285,7 @@ def train_model(
             save_frequency,
             early_stopping_patience,
             device,
+            wandb_run,
         )
 
     logger.info("Training finished!")
