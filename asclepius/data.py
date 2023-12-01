@@ -18,6 +18,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import v2 as transforms
 
 from asclepius.config import logger
+from tqdm import tqdm
 
 
 class BreastDataset(Dataset):
@@ -240,14 +241,50 @@ def transform_arr(arr: np.ndarray, transform_metadata: Dict):
     return arr
 
 
-def prepare_patient_data(mat_files: Dict, metadata: Dict):
+def segment_invert(us_arr: np.ndarray):
+    us_arr = rescale_intensity(us_arr, out_range=(0, 255)).astype("uint8")
+    seg_arr = np.empty_like(us_arr)
+
+    for i in tqdm(range(us_arr.shape[-1])):
+        image = us_arr[:, :, i]
+        lim = int(np.max(np.argmax(np.gradient(image, axis=0), axis=0)))
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        mask = np.zeros(image.shape[:2], np.uint8)
+        rect = (0, 0, image.shape[1], lim)
+        cv2.grabCut(image, mask, rect, None, None, 5, cv2.GC_INIT_WITH_RECT)
+        binary_mask = np.where((mask == 2) | (mask == 0), 0, 1).astype("uint8")
+        segmented_image = image * binary_mask[:, :, np.newaxis]
+        segmented_image = cv2.cvtColor(segmented_image, cv2.COLOR_RGB2GRAY)
+        seg_arr[:, :, i] = us_arr[:, :, i] - segmented_image
+
+    return 1 - seg_arr
+
+
+def prepare_patient_data(
+    mat_files: Dict,
+    metadata: Dict,
+    sliding_window_size: int = None,
+    invert_us: bool = False,
+):
     pa_mat = mat_files["pa_mat"]
     pa_transforms = metadata["pa"]
     pa_arr = transform_arr(pa_mat, pa_transforms)
+    if sliding_window_size is not None:
+        pa_slid = np.empty_like(pa_arr)
+        for i in range(pa_arr.shape[-1] - sliding_window_size):
+            pa_slid[:, :, i + sliding_window_size] = np.mean(
+                pa_arr[:, :, i : i + sliding_window_size], axis=2
+            )
+        pa_slid = pa_slid[:, :, sliding_window_size:]
+        pa_arr = pa_slid
 
     us_mat = mat_files["us_mat"]
     us_transforms = metadata["us"]
     us_arr = transform_arr(us_mat, us_transforms)
+    us_arr = us_arr[:, :, sliding_window_size:]
+    if invert_us:
+        logger.info("inverting us_arr")
+        us_arr = segment_invert(us_arr)
 
     return {"pa_arr": pa_arr, "us_arr": us_arr}
 
@@ -299,15 +336,15 @@ def calculate_split_bounds(split: str, frame_count: int, metadata: dict):
 
 
 def label_and_save_frames(
-    data_root: Path,
+    target_dir: Path,
     split: str,
     patient_id: str,
     transformed_arrs: Dict,
     metadata: Dict,
     buffer: int = 10,
 ):
-    target_dir = data_root.joinpath(f"preprocessed/{split}")
-    os.makedirs(target_dir, exist_ok=True)
+    split_dir = target_dir.joinpath(split)
+    os.makedirs(split_dir, exist_ok=True)
 
     pa_arr_shape = transformed_arrs["pa_arr"].shape
     us_arr_shape = transformed_arrs["us_arr"].shape
@@ -343,9 +380,7 @@ def label_and_save_frames(
                 label = "tumor"
                 if split == "aug":
                     scio.savemat(
-                        str(
-                            target_dir.joinpath(f"{patient_id}_PA_{cs_index}_flip.mat")
-                        ),
+                        str(split_dir.joinpath(f"{patient_id}_PA_{cs_index}_flip.mat")),
                         {
                             "frame": np.fliplr(
                                 np.squeeze(pa_norm[:, :, cs_index]).copy()
@@ -354,9 +389,7 @@ def label_and_save_frames(
                         },
                     )
                     scio.savemat(
-                        str(
-                            target_dir.joinpath(f"{patient_id}_US_{cs_index}_flip.mat")
-                        ),
+                        str(split_dir.joinpath(f"{patient_id}_US_{cs_index}_flip.mat")),
                         {
                             "frame": np.fliplr(
                                 np.squeeze(us_norm[:, :, cs_index]).copy()
@@ -367,11 +400,11 @@ def label_and_save_frames(
             else:
                 label = "clean"
             scio.savemat(
-                str(target_dir.joinpath(f"{patient_id}_PA_{cs_index}.mat")),
+                str(split_dir.joinpath(f"{patient_id}_PA_{cs_index}.mat")),
                 {"frame": pa_norm[:, :, cs_index], "label": label},
             )
             scio.savemat(
-                str(target_dir.joinpath(f"{patient_id}_US_{cs_index}.mat")),
+                str(split_dir.joinpath(f"{patient_id}_US_{cs_index}.mat")),
                 {"frame": us_norm[:, :, cs_index], "label": label},
             )
     return True

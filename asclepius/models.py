@@ -110,8 +110,17 @@ def custom_vit_b_16(in_channels):
 
 def custom_densenet(in_channels):
     model = models.DenseNet(12, [4, 8, 6], 64, num_classes=2)
+    # growth_rate (int) - how many filters to add each layer (`k` in paper)
+    # block_config (list of 4 ints) - how many layers in each pooling block
+    # num_init_features (int) - the number of filters to learn in the first convolution layer
+    # bn_size (int) - multiplicative factor for number of bottle neck layers
+    #     (i.e. bn_size * k features in the bottleneck layer)
+    # drop_rate (float) - dropout rate after each dense layer
+    # num_classes (int) - number of classification classes
+    # memory_efficient (bool) - If True, uses checkpointing. Much more memory efficient,
+    #     but slower. Default: *False*. See `"paper" <https://arxiv.org/pdf/1707.06990.pdf>`_.
     model.features.conv0 = nn.Conv2d(
-        in_channels, 64, kernel_size=(5, 15), stride=(3, 5), padding=(3, 5), bias=False
+        in_channels, 64, kernel_size=(5, 5), stride=(3, 3), padding=(3, 3), bias=True
     )
 
     return model

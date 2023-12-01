@@ -94,6 +94,7 @@ def train_and_validate(
     wandb_run: wandb.run = None,
 ):
     best_auc = 0.0
+    best_f1 = 0.0
     no_improvement_count = 0
     # Training loop
     for epoch in tqdm(range(epochs)):
@@ -164,10 +165,14 @@ def train_and_validate(
         fpr, tpr, _ = roc_curve(true_labels, predicted_labels)
         val_auc = auc(fpr, tpr)
 
-        if val_auc > best_auc:
+        if val_auc > best_auc or f1_val > best_f1:
             no_improvement_count = 0
-            best_auc = val_auc
-            torch.save(model.state_dict(), f"{output_dir}/best_auc.pth")
+            if val_auc > best_auc:
+                best_auc = val_auc
+                torch.save(model.state_dict(), f"{output_dir}/best_auc.pth")
+            if f1_val > best_f1:
+                best_f1 = f1_val
+                torch.save(model.state_dict(), f"{output_dir}/best_f1.pth")
             logger.info("Saved the best model.")
         else:
             no_improvement_count += 1
@@ -185,22 +190,24 @@ def train_and_validate(
             break
 
         model.train()
-        wandb_run.log(
-            {
-                "epoch": epoch + 1,
-                "train_loss": total_loss / len(train_loader),
-                "train_auc": train_auc,
-                "train_f1": f1_train,
-                "train_precision": precision_train,
-                "train_recall": recall_train,
-                "val_loss": valid_loss / len(val_loader),
-                "val_auc": val_auc,
-                "val_f1": f1_val,
-                "val_precision": precision_val,
-                "val_recall": recall_val,
-            }
-        )
-    wandb_run.finish()
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    "epoch": epoch + 1,
+                    "train_loss": total_loss / len(train_loader),
+                    "train_auc": train_auc,
+                    "train_f1": f1_train,
+                    "train_precision": precision_train,
+                    "train_recall": recall_train,
+                    "val_loss": valid_loss / len(val_loader),
+                    "val_auc": val_auc,
+                    "val_f1": f1_val,
+                    "val_precision": precision_val,
+                    "val_recall": recall_val,
+                }
+            )
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 def train_model(

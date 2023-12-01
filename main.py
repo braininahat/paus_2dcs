@@ -24,12 +24,27 @@ def prepare_dataset(
     dataset_root: Path = Path("dataset").resolve(),
     metadata_file: Annotated[str, typer.Option()] = "metadata",
     buffer: Annotated[int, typer.Option()] = 10,
+    sliding_window_size: Annotated[int, typer.Option()] = None,
+    invert_us: Annotated[bool, typer.Option()] = False,
+    target_dir: Annotated[Path, typer.Option()] = None,
 ):
-    target_dir = dataset_root.joinpath(f"preprocessed/{split}")
-    if Path.exists(target_dir):
-        logger.info(f"found existing data at: {target_dir}")
+    logger.info(f"dataset root: {dataset_root}")
+
+    if target_dir is None:
+        target_dir = dataset_root.joinpath(f"preprocessed")
+    else:
+        target_dir = dataset_root.joinpath(target_dir)
+
+    logger.info(f"target directory: {target_dir}")
+
+    split_dir = target_dir.joinpath(split)
+
+    logger.info(f"split directory: {split_dir}")
+
+    if Path.exists(split_dir):
+        logger.info(f"found existing data at: {split_dir}")
         logger.info("cleaning...")
-        shutil.rmtree(target_dir)
+        shutil.rmtree(split_dir)
 
     logger.info(f"loading dataset...")
 
@@ -44,14 +59,15 @@ def prepare_dataset(
     logger.info(f"patient IDs and directories match!")
 
     logger.info(f"processing patient data...")
+    logger.info(f"sliding window size: {sliding_window_size}")
     for patient_id in tqdm(patient_ids):
         patient_metadata = metadata[patient_id]
         mat_files = data.load_patient_data(dataset_root, patient_id, patient_metadata)
         transformed_patient_data = data.prepare_patient_data(
-            mat_files, patient_metadata
+            mat_files, patient_metadata, sliding_window_size, invert_us
         )
         data.label_and_save_frames(
-            dataset_root,
+            target_dir,
             split,
             patient_id,
             transformed_patient_data,
@@ -182,8 +198,9 @@ def sweep_trainer():
     hflip = wandb.config.hflip
 
     target_str = str(",".join([str(dim) for dim in target_size]))
+    logger.info(f"dataset variant: {dataset_root.stem}")
     target_dir = Path(
-        f"sweep/{timestamp}/{target_str}/{learning_rate}/{batch_size}/{wd}/{dropout}/"
+        f"sweep/{timestamp}/{dataset_root.stem}/{target_str}/{learning_rate}/{batch_size}/{wd}/{dropout}/"
     ).resolve()
 
     logger.info(f"training model: {model_name}")
@@ -250,7 +267,7 @@ def sweep():
         "method": "grid",
         "metric": {"name": "val_auc", "goal": "maximize"},
         "parameters": {
-            "model_name": {"values": ["cnn", "densenet", "swin", "svm"]},
+            "model_name": {"values": ["densenet", "swin"]},
             "modality": {
                 "values": [
                     "US",
@@ -262,29 +279,33 @@ def sweep():
                     "GaborUS",
                     "GaborPA",
                     "GaborPAUS",
-                    "GLCMUS",
-                    "GLCMPA",
-                    "GLCMPAUS",
+                    # "GLCMUS",
+                    # "GLCMPA",
+                    # "GLCMPAUS",
                 ]
             },
-            "batch_size": {"values": [1, 2, 4, 8, 16, 32, 64]},
+            "batch_size": {"value": 1},
             "dataset_root": {
                 "value": str(Path("dataset/preprocessed").resolve()),
+                # [
+                #     str(Path("dataset/inverted").resolve()),
+                #     str(Path("dataset/slid").resolve()),
+                # ],
             },
-            "dropout": {"values": [0.3, 0.5, 0.7]},
-            "early_stopping_patience": {"value": 50},
+            "dropout": {"value": 0.3},
+            "early_stopping_patience": {"value": 20},
             "epochs": {"value": 1000},
             "hflip": {"value": False},
-            "learning_rate": {"values": [1e-3, 1e-4]},
+            "learning_rate": {"value": 5e-4},
             "mode": {"value": "train"},
             "num_classes": {"value": 2},
             "save_frequency": {"value": 10},
             "scheduler": {"value": "exponential"},
             "shuffle": {"value": True},
-            "split": {"value": "bal"},
-            "target_size": {"values": [[150, 390], [256, 256]]},
+            "split": {"value": "aug"},
+            "target_size": {"values": [[150, 390], [192, 384]]},
             "timestamp": {"value": datetime.now().strftime("%Y%m%d%H%M%S")},
-            "wd": {"values": [1e-4, 1e-5]},
+            "wd": {"value": 1e-4},
         },
     }
     sweep_id = wandb.sweep(sweep_config, project="paus_2dcs")
